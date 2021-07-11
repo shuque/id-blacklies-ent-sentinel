@@ -1,0 +1,273 @@
+<?xml version='1.0' encoding='utf-8'?>
+
+<!DOCTYPE rfc SYSTEM "rfc2629-xhtml.ent">
+
+<?xml-stylesheet type='text/xsl' href='rfc2629.xslt' ?>
+<!-- used by XSLT processors -->
+<!-- For a complete list and description of processing instructions (PIs),
+     please see http://xml.resource.org/authoring/README.html. -->
+<!-- Below are generally applicable Processing Instructions (PIs) that most I-Ds might want to use.
+     (Here they are set differently than their defaults in xml2rfc v1.32) -->
+<?rfc strict="yes" ?>
+<!-- give errors regarding ID-nits and DTD validation -->
+<!-- control the table of contents (ToC) -->
+<?rfc toc="yes"?>
+<!-- generate a ToC -->
+<?rfc tocdepth="4"?>
+<!-- the number of levels of subsections in ToC. default: 3 -->
+<!-- control references -->
+<?rfc symrefs="yes"?>
+<!-- use symbolic references tags, i.e, [RFC2119] instead of [1] -->
+<?rfc sortrefs="yes" ?>
+<!-- sort the reference entries alphabetically -->
+<!-- control vertical white space
+     (using these PIs as follows is recommended by the RFC Editor) -->
+<?rfc compact="yes" ?>
+<!-- do not start each main section on a new page -->
+<?rfc subcompact="no" ?>
+<!-- keep one blank line between list items -->
+<!-- end of list of popular I-D processing instructions -->
+
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude"
+        category="info" consensus="true"
+        docName="draft-huque-dnsop-blacklies-ent-00"
+        ipr="trust200902" updates="" obsoletes=""
+        submissionType="IETF" xml:lang="en"
+        tocInclude="true" tocDepth="4"
+        symRefs="true" sortRefs="true" version="3">
+
+  <!-- ***** FRONT MATTER ***** -->
+
+  <front>
+
+    <title abbrev="Empty Non-Terminal Sentinel for Black Lies">Empty Non-Terminal Sentinel for Black Lies</title>
+    <seriesInfo name="Internet-Draft" value="draft-huque-black-lies-ent"/>
+    <author fullname="Shumon Huque" initials="S." surname="Huque">
+      <organization>Salesforce</organization>
+      <address>
+        <postal>
+          <street>415 Mission Street, 3rd Floor</street>
+          <city>San Francisco</city>
+          <region>CA</region>
+          <code>94105</code>
+          <country>United States of America</country>
+        </postal>
+        <email>shuque@gmail.com</email>
+      </address>
+    </author>
+
+    <date day="11" month="7" year="2021"/>
+    <!-- Meta-data Declarations -->
+
+    <area>General</area>
+    <workgroup>Internet Engineering Task Force</workgroup>
+    <keyword>Internet-Draft</keyword>
+    <keyword>DNS</keyword>
+    <keyword>Empty Non-Terminal</keyword>
+    <keyword>Sentinel</keyword>
+    <keyword>NSEC</keyword>
+    <keyword>Black Lies</keyword>
+
+    <abstract>
+     <t>
+      The Black Lies method of providing compact DNSSEC denial of
+      existence proofs has some operational implications. Depending
+      on the specific implementation, it may provide no way to reliably
+      distinguish Empty Non-Terminal names from names that actually do
+      not exist. This draft describes the use of a synthetic DNS resource
+      record type to act as an explicit signal for Empty Non-Terminal
+      names and which is conveyed in an NSEC type bitmap.
+      </t>
+    </abstract>
+
+  </front>
+
+  <middle>
+
+    <section numbered="true" toc="default">
+      <name>Introduction and Motivation</name>
+      <t>
+        One of the functions of the Domain Name System Security Extensions
+        (DNSSEC) <xref target="RFC4033" /> <xref target="RFC4034" />
+        <xref target="RFC4035" /> is "Authenticated Denial of Existence",
+        i.e. proving that a DNS name or record type does not exist.
+        Normally, this is done by means of NSEC or NSEC3 records. In the
+        precomputed signature model, these records chain together existing
+        names, or cryptographic hashes of them in the zone. In the online
+        signing model, they are used to dynamically compute an epsilon
+        function around the queried name.
+      </t>
+      <t>
+        An alternative method, <xref target="BLACKLIES" format="default">
+        Black Lies</xref>, described in an expired Internet draft, provides
+        more compact denial of existence proofs for online signers by relying
+        on a clever hack. For non-existent names, it claims that the name
+        exists, but has no resource records associated with the queried
+        type, i.e. it returns a NODATA response rather than an NXDOMAIN
+        response. A NODATA response (which has a response code of NOERROR,
+        and an empty ANSWER section) requires only one NSEC record matching
+        the queried name. This has two advantages: the DNS response sizes
+        are smaller, and it reduces the online cryptographic work involved
+        in generating the responses. By contrast, an NXDOMAIN response
+        requires multiple records (up to 2 when using NSEC, and up to 3
+        when using NSEC3) to prove that (1) the name did not explicitly
+        exist in the zone, and (2) that it could not have been synthesized
+        by a wildcard.
+      </t>
+      <t>
+        The Black Lies method has some operational implications. Tools
+        that rely on the correctness of the DNS response code (e.g.
+        obtaining NXDOMAIN for non-existent domains) no longer work.
+        Arguably, we should not be doing this anyway, since the response
+        code in the DNS header cannot be authenticated. This means that
+        NXDOMAIN has to be "inferred" from signed records in the DNS
+        response. Whether this inference can be reliably drawn depends
+        on other details of the Black Lies implementation. A Black Lies
+        NODATA response contains only "NSEC" and "RRSIG" in the NSEC
+        type bitmap. This is not sufficient to infer NXDOMAIN though,
+        because Empty Non-Terminal (ENT) responses (which positively
+        exist) will return the exact same response. DNS operators often
+        rely on precisely distinguishing NXDOMAIN from NODATA, including
+        ENT responses (such as tools that prevent the creation of zone
+        cuts or DNAME records at ENTs to avoid accidentally occluding
+        names underneath them - these have been critical safety features
+        of our DNS record provisioning systems).
+      </t>
+      <t>
+        Of the 3 implementations I've examined, NS1 (previously) and
+        Amazon Route53 suffer from this NXDOMAIN/ENT indistinguishability.
+        Cloudflare avoids this problem by synthesizing the NSEC type
+        bitmap for ENTs to include all (?) RR Types they support. This
+        has the side effect though of no longer being able to reliably
+        determine the existence of ENTs.
+      </t>
+    </section>
+
+    <section numbered="true" toc="default">
+      <name>Synthetic Type for Empty Non-Terminal Names</name>
+      <t>
+        This document proposes the use of a synthetic Resource Record
+        type to signal the presence of an Empty Non-Terminal name.
+        This RR type is added to the NSEC type bitmap for responses
+        to ENTs. Currently, the deployed examples of this scheme
+        are using the private RR type code 65281. So the resulting
+        type bitmap would have "NSEC RRSIG TYPE65281". Should this
+        document be published, a formal request for an RR type number
+        could be made.
+      </t>
+      <t>
+        NS1 has implemented this scheme in their Managed DNS platform.
+        The following is an example of a response to an Empty Non-
+        Terminal name hosted on their service:
+      </t>
+      <artwork name="" type="" align="left" alt=""><![CDATA[
+$ dig +dnssec +multi ent1.sfdcsd.net. A
+
+; <<>> DiG 9.16.15 <<>> +dnssec +multi ent1.sfdcsd.net. A
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 53091
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags: do; udp: 1232
+;; QUESTION SECTION:
+;ent1.sfdcsd.net.       IN A
+
+;; AUTHORITY SECTION:
+ent1.sfdcsd.net.        3592 IN RRSIG NSEC 13 3 3600 (
+                                20210712120255 20210710120255 44688 sfdcsd.net.
+                                lG/EJq0M1cs6vw0ragtvMV+B/Sd2CAPsxo1/WIOT6BZt
+                                /QxukD5k8AeygmWYKnrR9jdb2SnXBxFEQss/mTSAOw== )
+ent1.sfdcsd.net.        3592 IN NSEC \000.ent1.sfdcsd.net. RRSIG NSEC TYPE65281
+sfdcsd.net.             3592 IN SOA dns1.p08.nsone.net. hostmaster.nsone.net. (
+                                1619363158 ; serial
+                                43200      ; refresh (12 hours)
+                                7200       ; retry (2 hours)
+                                1209600    ; expire (2 weeks)
+                                3600       ; minimum (1 hour)
+                                )
+sfdcsd.net.             3592 IN RRSIG SOA 13 2 3600 (
+                                20210712120255 20210710120255 44688 sfdcsd.net.
+                                m2J7Q6mk6Y8lNxXEWVNw2/cVJPIeHZMAAeYglTgyob3s
+                                mXV5hTtOpydytWFynIjdKf8YeGOpZm3zqoyLyPgMbg== )
+        ]]></artwork>
+    </section>
+
+    <section numbered="true" toc="default">
+      <name>Status of Black Lies specification</name>
+      <t>
+        Despite the fact that Black Lies is not standardized or even
+        formally published as a protocol specification, it seems to be
+        gaining in popularity and deployment. At least 3 major DNS
+        providers (Cloudflare, NS1 and Amazon Route53) have deployed it.
+        Due to the fact that Black Lies relies on contorting existing
+        semantics of the DNS protocol, it seems unlikely that it could
+        be published as a "Standards Track" specification. But given
+        deployment realities, it seems desirable to have a stable
+        specification published for it, even if its status is
+        Informational.
+      </t>
+    </section>
+
+    <section numbered="true" toc="default">
+      <name>Implementation Status</name>
+      <t>
+        NS1 has implemented the scheme described in this document.
+        Example code to infer NXDOMAIN from Black Lies NODATA responses
+        can be found here: https://github.com/shuque/blrcode
+      </t>
+    </section>
+
+    <section anchor="Acknowledgements" numbered="true" toc="default">
+      <name>Acknowledgements</name>
+      <t>
+        Jan Vcelak of NS1.
+      </t>
+    </section>
+
+    <section anchor="IANA" numbered="true" toc="default">
+      <name>IANA Considerations</name>
+      <t>TBD based on DNSOP working group deliberations.</t>
+    </section>
+
+    <section anchor="Security" numbered="true" toc="default">
+      <name>Security Considerations</name>
+      <t>
+        The method proposed in this document addresses a potential
+        security issue, namely reliably determining NXDOMAIN in Black
+        Lies implementations.
+      </t>
+    </section>
+
+  </middle>
+
+  <!--  *****BACK MATTER ***** -->
+
+  <back>
+
+    <references>
+      <name>References</name>
+      <references>
+        <name>Normative References</name>
+        <xi:include href="https://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.4033.xml"/>
+        <xi:include href="https://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.4034.xml"/>
+        <xi:include href="https://xml2rfc.tools.ietf.org/public/rfc/bibxml/reference.RFC.4035.xml"/>
+      </references>
+      <references>
+        <name>Informative References</name>
+      <reference anchor="BLACKLIES"
+                 target="https://tools.ietf.org/html/draft-valsorda-dnsop-black-lies">
+        <front>
+          <title>Compact DNSSEC Denial of Existence or Black Lies</title>
+          <author fullname="Filippo Valsorda" initials="F" surname="Valsorda" />
+          <author fullname="Olafur Gudmundsson" initials="O" surname="Gudmundsson" />
+          <date />
+        </front>
+      </reference>
+      </references>
+    </references>
+
+  </back>
+
+</rfc>
